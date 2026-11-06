@@ -1,0 +1,49 @@
+# ==========================================
+# DEPENDÊNCIAS E COMPILAÇÃO
+# ==========================================
+node_modules/
+dist/
+dist-ssr/
+target/
+build/
+*.jar
+*.war
+
+# ==========================================
+# VARIÁVEIS DE AMBIENTE E SEGREDOS LOCAIS
+# ==========================================
+*.env*
+.env
+.env.*
+application-local.properties
+application-*-local.properties
+
+# ==========================================
+# IDES E CONFIGURAÇÕES LOCAIS
+# ==========================================
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ==========================================
+# BANCO DE DADOS E BACKUPS
+# ==========================================
+*.sql
+*.sql.gpg
+*.dump
+*.bak
+
+# ==========================================
+# ARQUIVOS DE SISTEMA E LOGS
+# ==========================================
+.DS_Store
+Thumbs.db
+*.log
+logs/

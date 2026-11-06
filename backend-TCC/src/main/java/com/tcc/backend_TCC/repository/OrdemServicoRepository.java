@@ -1,0 +1,96 @@
+package com.tcc.backend_TCC.repository;
+
+import com.tcc.backend_TCC.enuns.StatusOS;
+import com.tcc.backend_TCC.model.OrdemServico;
+import com.tcc.backend_TCC.model.Pessoa;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+
+@Repository
+public interface OrdemServicoRepository extends JpaRepository<OrdemServico, Long> {
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    List<OrdemServico> findByMecanicos_MecanicoId(Long mecanicoId);
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    List<OrdemServico> findByCliente(Pessoa cliente);
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    List<OrdemServico> findByStatus(StatusOS status);
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    Page<OrdemServico> findByStatus(StatusOS status, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    @Query("SELECT os FROM OrdemServico os WHERE " +
+           "(:status IS NULL OR os.status = :status) AND " +
+           "(:busca IS NULL OR :busca = '' OR " +
+           " LOWER(os.cliente.nome) LIKE LOWER(CONCAT('%', :busca, '%')) OR " +
+           " LOWER(os.veiculo) LIKE LOWER(CONCAT('%', :busca, '%')) OR " +
+           " CAST(os.id AS string) LIKE CONCAT('%', :busca, '%'))")
+    Page<OrdemServico> pesquisar(
+            @Param("status") StatusOS status,
+            @Param("busca") String busca,
+            Pageable pageable
+    );
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    List<OrdemServico> findByDataRegistoBetween(LocalDate inicio, LocalDate fim);
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    @Query("SELECT os FROM OrdemServico os WHERE COALESCE(os.dataRealizacao, os.dataRegisto) BETWEEN :inicio AND :fim")
+    List<OrdemServico> findByPeriodoReferencia(@Param("inicio") LocalDate inicio, @Param("fim") LocalDate fim);
+
+    @EntityGraph(attributePaths = {"cliente", "mecanicos", "mecanicos.mecanico"})
+    @Query("SELECT os FROM OrdemServico os WHERE os.cliente.id = :clienteId " +
+           "AND COALESCE(os.dataRealizacao, os.dataRegisto) BETWEEN :inicio AND :fim " +
+           "AND os.status <> 'CANCELADA' " +
+           "ORDER BY COALESCE(os.dataRealizacao, os.dataRegisto) ASC, os.id ASC")
+    List<OrdemServico> findByClienteEPeriodo(
+            @Param("clienteId") Long clienteId,
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim
+    );
+
+    // Corrigido: Baseado na data de realização/conclusão da OS para não perder OSs que viram o mês
+    @Query("SELECT COALESCE(SUM(os.valorTotal), 0) FROM OrdemServico os " +
+            "WHERE COALESCE(os.dataRealizacao, os.dataRegisto) BETWEEN :inicio AND :fim " +
+            "AND os.status = 'CONCLUIDA'")
+    BigDecimal totalFaturadoPorPeriodo(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim
+    );
+
+    @Query("SELECT YEAR(COALESCE(os.dataRealizacao, os.dataRegisto)) as ano, MONTH(COALESCE(os.dataRealizacao, os.dataRegisto)) as mes, COALESCE(SUM(os.valorTotal), 0) as total " +
+           "FROM OrdemServico os " +
+           "WHERE os.status = 'CONCLUIDA' " +
+           "AND COALESCE(os.dataRealizacao, os.dataRegisto) BETWEEN :inicio AND :fim " +
+           "GROUP BY YEAR(COALESCE(os.dataRealizacao, os.dataRegisto)), MONTH(COALESCE(os.dataRealizacao, os.dataRegisto))")
+    List<Object[]> faturamentoMensalAgrupado(
+            @Param("inicio") LocalDate inicio,
+            @Param("fim") LocalDate fim
+    );
+
+    // Dashboard metrics otimizado - tudo em uma query só!
+    @Query("SELECT " +
+           "  COUNT(os), " +
+           "  COALESCE(SUM(CASE WHEN os.status = 'CONCLUIDA' THEN os.valorTotal ELSE 0 END), 0), " +
+           "  COUNT(CASE WHEN os.status = 'CONCLUIDA' THEN 1 END), " +
+           "  COUNT(CASE WHEN os.status = 'ABERTA' THEN 1 END), " +
+           "  COUNT(CASE WHEN os.status = 'CANCELADA' THEN 1 END), " +
+           "  COUNT(CASE WHEN os.dataRegisto = :hoje THEN 1 END) " +
+           "FROM OrdemServico os " +
+           "WHERE os.dataRegisto BETWEEN :inicio AND :fim")
+    Object[] getDashboardMetrics(@Param("inicio") LocalDate inicio, 
+                                 @Param("fim") LocalDate fim,
+                                 @Param("hoje") LocalDate hoje);
+}

@@ -1,0 +1,78 @@
+name: Supabase Database Backup
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configurar Carimbo de Data/Hora (Timestamp)
+        id: timestamp
+        run: echo "TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
+
+      - name: Fazer o Backup do Supabase (Usando Docker)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "Aviso: A Secret SUPABASE_DB_URL não foi configurada neste repositório. Backup ignorado com sucesso."
+            exit 0
+          fi
+          
+          echo "Iniciando o backup do banco de dados com a imagem oficial do PostgreSQL 17..."
+          docker run --rm postgres:17 pg_dump "$SUPABASE_DB_URL" --clean --if-exists --no-owner --no-privileges > backup_tcc_${{ env.TIMESTAMP }}.sql
+          echo "Backup extraído com sucesso."
+
+      - name: Criptografar Backup com AES-256 (GPG)
+        env:
+          BACKUP_ENCRYPTION_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+        run: |
+          if [ ! -f "backup_tcc_${{ env.TIMESTAMP }}.sql" ]; then
+            echo "Nenhum arquivo de backup gerado para criptografar."
+            exit 0
+          fi
+          
+          if [ -z "$BACKUP_ENCRYPTION_PASSPHRASE" ]; then
+            echo "Aviso: Secret BACKUP_ENCRYPTION_PASSPHRASE não configurada. Encerrando por segurança."
+            exit 0
+          fi
+          
+          echo "Criptografando o dump do banco com AES-256..."
+          gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase "$BACKUP_ENCRYPTION_PASSPHRASE" \
+              -o backup_tcc_${{ env.TIMESTAMP }}.sql.gpg backup_tcc_${{ env.TIMESTAMP }}.sql
+          
+          rm -f backup_tcc_${{ env.TIMESTAMP }}.sql
+          echo "Backup criptografado com sucesso (backup_tcc_${{ env.TIMESTAMP }}.sql.gpg)."
+
+      - name: Enviar para Repositório de Backup Privado
+        env:
+          BACKUP_REPO_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+          BACKUP_REPO: ${{ secrets.BACKUP_REPO || 'JoaoPedro456/TCC-backups' }}
+        run: |
+          if [ ! -f "backup_tcc_${{ env.TIMESTAMP }}.sql.gpg" ]; then
+            echo "Nenhum arquivo criptografado disponível para envio."
+            exit 0
+          fi
+          
+          if [ -z "$BACKUP_REPO_TOKEN" ]; then
+            echo "Aviso: Secret BACKUP_REPO_TOKEN não configurada. Encerrando envio."
+            exit 0
+          fi
+          
+          echo "Clonando repositório de backups privado..."
+          git clone https://x-access-token:${BACKUP_REPO_TOKEN}@github.com/${BACKUP_REPO}.git backup-repo
+          
+          echo "Movendo o arquivo de backup criptografado..."
+          mv backup_tcc_${{ env.TIMESTAMP }}.sql.gpg backup-repo/
+          
+          echo "Configurando git e enviando as alterações..."
+          cd backup-repo
+          git config user.name "GitHub Actions Backup Bot"
+          git config user.email "actions@github.com"
+          git add backup_tcc_${{ env.TIMESTAMP }}.sql.gpg
+          git commit -m "Backup automático criptografado: ${{ env.TIMESTAMP }}"
+          git push origin main

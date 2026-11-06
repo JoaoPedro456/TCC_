@@ -1,0 +1,139 @@
+package com.tcc.backend_TCC.service;
+
+import com.tcc.backend_TCC.model.Pessoa;
+import com.tcc.backend_TCC.enuns.TipoPessoa;
+import com.tcc.backend_TCC.repository.PessoaRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class PessoaServiceTest {
+
+    @Mock
+    private PessoaRepository repository;
+
+    @Mock
+    private com.tcc.backend_TCC.repository.OrdemServicoRepository ordemServicoRepository;
+
+    @Mock
+    private com.tcc.backend_TCC.repository.LancamentoRepository lancamentoRepository;
+
+    @InjectMocks
+    private PessoaService service;
+
+    @Test
+    void salvar_comSucesso_retornaPessoa() {
+        Pessoa pessoa = new Pessoa();
+        pessoa.setNome("João");
+        pessoa.setTelefone("11999990000");
+        pessoa.setTipo(TipoPessoa.CLIENTE);
+
+        when(repository.save(any(Pessoa.class))).thenReturn(pessoa);
+
+        Pessoa resultado = service.salvar(pessoa);
+
+        assertEquals("João", resultado.getNome());
+        verify(repository).save(pessoa);
+    }
+
+    @Test
+    void salvar_cpfDuplicado_lancaExcecao() {
+        Pessoa pessoa = new Pessoa();
+        pessoa.setNome("João");
+        pessoa.setCpf("08530588908"); // CPF válido
+        pessoa.setTipo(TipoPessoa.CLIENTE);
+
+        Pessoa existente = new Pessoa();
+        existente.setId(1L);
+        existente.setCpf("08530588908");
+        existente.setAtivo(true);
+
+        when(repository.findByCpfIncludingDeleted("08530588908")).thenReturn(Optional.of(existente));
+        when(repository.findByCpfAndAtivoTrue("08530588908")).thenReturn(Optional.of(existente));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> service.salvar(pessoa));
+        assertEquals("Este CPF já está cadastrado no sistema!", ex.getReason());
+    }
+
+    @Test
+    void atualizar_comSucesso_retornaPessoaAtualizada() {
+        Pessoa existente = new Pessoa();
+        existente.setId(1L);
+        existente.setNome("Antigo");
+
+        Pessoa atualizada = new Pessoa();
+        atualizada.setNome("Novo");
+        atualizada.setTelefone("11999990000");
+        atualizada.setTipo(TipoPessoa.CLIENTE);
+
+        when(repository.findById(1L)).thenReturn(Optional.of(existente));
+        when(repository.save(any(Pessoa.class))).thenReturn(atualizada);
+
+        Pessoa resultado = service.atualizar(1L, atualizada);
+
+        assertEquals("Novo", resultado.getNome());
+    }
+
+    @Test
+    void atualizar_pessoaNaoEncontrada_lancaExcecao() {
+        when(repository.findById(999L)).thenReturn(Optional.empty());
+
+        assertThrows(ResponseStatusException.class, () ->
+                service.atualizar(999L, new Pessoa()));
+    }
+
+    @Test
+    void excluir_comSucesso_anonymizesData() {
+        Pessoa p = new Pessoa();
+        p.setId(2L);
+        p.setNome("Cliente Teste");
+        p.setCpf("12345678901");
+        p.setCnpj("12345678000199");
+        p.setTelefone("11999990000");
+        when(repository.findById(2L)).thenReturn(Optional.of(p));
+        when(ordemServicoRepository.findByCliente(p)).thenReturn(java.util.Collections.emptyList());
+        when(lancamentoRepository.findByTipoOrderByVencimentoAsc(com.tcc.backend_TCC.enuns.TipoLancamento.RECEBER))
+                .thenReturn(java.util.Collections.emptyList());
+
+        service.excluir(2L);
+
+        verify(repository).save(p);
+        verify(repository).deleteById(2L);
+        assertEquals("Anônimo", p.getNome());
+        assertNull(p.getCpf());
+        assertNull(p.getCnpj());
+        assertNull(p.getTelefone());
+    }
+
+    @Test
+    void excluir_comSucesso_removePessoa() {
+        Pessoa p = new Pessoa();
+        p.setId(1L);
+        p.setNome("Cliente Teste");
+        when(repository.findById(1L)).thenReturn(Optional.of(p));
+        when(ordemServicoRepository.findByCliente(p)).thenReturn(java.util.Collections.emptyList());
+        when(lancamentoRepository.findByTipoOrderByVencimentoAsc(com.tcc.backend_TCC.enuns.TipoLancamento.RECEBER))
+                .thenReturn(java.util.Collections.emptyList());
+
+        service.excluir(1L);
+
+        verify(repository).save(p);
+        verify(repository).deleteById(1L);
+    }
+
+    @Test
+    void excluir_pessoaNaoEncontrada_lancaExcecao() {
+        when(repository.findById(999L)).thenReturn(Optional.empty());
+
+        assertThrows(ResponseStatusException.class, () -> service.excluir(999L));
+    }
+}

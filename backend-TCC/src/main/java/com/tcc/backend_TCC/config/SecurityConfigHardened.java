@@ -1,0 +1,182 @@
+package com.tcc.backend_TCC.config;
+
+import com.tcc.backend_TCC.security.JwtFilter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.security.web.header.writers.XXssProtectionHeaderWriter;
+import java.util.List;
+
+/**
+ * HARDENED SECURITY CONFIGURATION
+ * Focused on maximum protection against common attacks
+ */
+@Configuration
+@EnableWebSecurity
+@org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
+public class SecurityConfigHardened {
+
+    @Autowired
+    private JwtFilter jwtFilter;
+
+    @Autowired
+    private RateLimitingFilter rateLimitingFilter;
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            // CORS Configuration - Restrictive
+            .cors(cors -> cors
+                .configurationSource(corsConfigurationSource())
+            )
+            // CSRF Protection - Enhanced for stateless
+            .csrf(csrf -> csrf
+                .disable() // Stateless API
+            )
+            // Session Management - Strict stateless
+            .sessionManagement(s -> s
+                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            )
+            // Authorization - Role-based with method security
+            .authorizeHttpRequests(auth -> auth
+                // Allow preflight CORS requests
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                // Public endpoints
+                .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                .requestMatchers("/api/health").permitAll()
+
+                // Endpoints do Dashboard inicial - acessíveis para qualquer usuário autenticado (OPERADOR ou ADMIN)
+                .requestMatchers(HttpMethod.GET, "/api/relatorios/dashboard", "/api/relatorios/contas-apagar-dashboard").authenticated()
+
+                // Admin endpoints - restrito apenas para ADMIN
+                .requestMatchers(HttpMethod.POST, "/api/auth/registrar").hasRole("ADMIN")
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/financeiro/**").hasRole("ADMIN")
+                .requestMatchers("/api/relatorios/**").hasRole("ADMIN")
+
+                // Exclusões de registros sensíveis - restrito apenas para ADMIN
+                .requestMatchers(HttpMethod.DELETE, "/api/pessoa/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/ordens/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/orcamentos/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/materiais/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/servico/**").hasRole("ADMIN")
+
+                // Operações do dia a dia - OPERADOR ou ADMIN autenticados
+                .requestMatchers("/api/pessoa/**").authenticated()
+                .requestMatchers("/api/ordens/**").authenticated()
+                .requestMatchers("/api/orcamentos/**").authenticated()
+                .requestMatchers("/api/materiais/**").authenticated()
+                .requestMatchers("/api/servico/**").authenticated()
+                .requestMatchers(HttpMethod.PUT, "/api/auth/alterar-senha").authenticated()
+
+                // Qualquer outra requisição - requer autenticação
+                .anyRequest().authenticated()
+            )
+            // Security Headers - Maximum protection
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp
+                    .policyDirectives("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;")
+                )
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .maxAgeInSeconds(31536000)
+                    .includeSubDomains(true)
+                )
+                    .xssProtection(xss -> xss
+                            .headerValue(XXssProtectionHeaderWriter.HeaderValue.ENABLED_MODE_BLOCK)
+                    )
+                .frameOptions(frame -> frame
+                    .deny() // Deny H2 console in production
+                )
+                .addHeaderWriter(new StaticHeadersWriter("X-Content-Type-Options", "nosniff"))
+                .addHeaderWriter(new StaticHeadersWriter("Referrer-Policy", "strict-origin-when-cross-origin"))
+                .addHeaderWriter(new StaticHeadersWriter("Permissions-Policy", "geolocation=(), microphone=(), camera=()"))
+            )
+            // Exception Handling - Don't leak information
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
+            )
+            // Filter Order - Critical for security
+            .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    /**
+     * RESTRICTIVE CORS CONFIGURATION
+     * Only allows specific origins in production
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+
+        // Em produção, configure CORS_ALLOWED_ORIGINS como variável de ambiente
+        // Exemplo: CORS_ALLOWED_ORIGINS=https://meusistema.vercel.app,http://localhost:5173
+        String allowedOrigins = System.getenv("CORS_ALLOWED_ORIGINS");
+        if (allowedOrigins != null && !allowedOrigins.isBlank()) {
+            // Split the comma‑separated list and trim each entry
+            java.util.List<String> origins = java.util.Arrays.stream(allowedOrigins.split(","))
+                    .map(java.lang.String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(java.util.stream.Collectors.toList());
+            configuration.setAllowedOrigins(origins);
+        } else {
+            // Fallback seguro incluindo localhost e o frontend Vercel padrão
+            configuration.setAllowedOriginPatterns(java.util.List.of(
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "https://front-tcc-pi.vercel.app"
+            ));
+        }
+        configuration.setAllowedMethods(List.of(
+            "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"
+        ));
+        configuration.setAllowedHeaders(List.of(
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "Access-Control-Request-Method",
+            "Access-Control-Request-Headers"
+        ));
+        configuration.setExposedHeaders(List.of(
+            "Authorization",
+            "Content-Type"
+        ));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        // BCrypt with strength 12 for better security
+        return new BCryptPasswordEncoder(12);
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
+
+}
